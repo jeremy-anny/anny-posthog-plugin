@@ -1,0 +1,23 @@
+{
+  "name": "posthog-anny",
+  "description": "PostHog on https://posthog.anny.cloud (anny self-hosted) -- analytics, feature flags, experiments, error tracking. Mirror of PostHog/ai-plugin.",
+  "version": "1.1.62",
+  "author": {
+    "name": "PostHog",
+    "email": "hey@posthog.com",
+    "url": "https://posthog.com"
+  },
+  "homepage": "https://github.com/jeremy-anny/anny-posthog-plugin",
+  "repository": "https://github.com/jeremy-anny/anny-posthog-plugin",
+  "license": "MIT",
+  "keywords": [
+    "analytics",
+    "feature-flags",
+    "experiments",
+    "error-tracking",
+    "a/b-testing",
+    "surveys",
+    "dashboards",
+    "llm-analytics"
+  ]
+}

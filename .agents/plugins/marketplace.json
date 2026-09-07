@@ -1,0 +1,20 @@
+{
+  "name": "anny",
+  "interface": {
+    "displayName": "PostHog (anny)"
+  },
+  "plugins": [
+    {
+      "name": "posthog-anny",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/jeremy-anny/anny-posthog-plugin.git"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

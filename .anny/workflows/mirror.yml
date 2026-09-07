@@ -1,0 +1,46 @@
+# Canonical copy lives at .anny/workflows/mirror.yml; apply-patches.sh copies it
+# here on every sync. Edit the copy under .anny/, never this one -- the next
+# sync overwrites it.
+name: Mirror upstream
+
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rebuild from upstream
+        run: .anny/sync-upstream.sh
+
+      - id: upstream
+        run: echo "sha=$(cat .anny/UPSTREAM_SHA)" >> "$GITHUB_OUTPUT"
+
+      # A PR, not a push. The ~160 skills drive `exec` subcommands that are API
+      # calls against our own PostHog: a plugin that runs ahead of the pinned
+      # instance version calls endpoints that do not exist yet. The diff is the
+      # review -- same deliberate promote step as bumping an image digest.
+      - uses: peter-evans/create-pull-request@v7
+        with:
+          branch: mirror/upstream
+          delete-branch: true
+          title: "sync: PostHog/ai-plugin@${{ steps.upstream.outputs.sha }}"
+          commit-message: "sync: PostHog/ai-plugin@${{ steps.upstream.outputs.sha }}"
+          body: |
+            Automatic mirror of `PostHog/ai-plugin@${{ steps.upstream.outputs.sha }}`,
+            with `.anny/apply-patches.sh` re-applied.
+
+            Before merging, check the diff for:
+            - **new or changed skills** that need `exec` subcommands our pinned
+              PostHog does not have yet
+            - **new files hardcoding a PostHog Cloud host** (the patch script
+              fails the build on `mcp.posthog.com`, but not on other hosts)
+            - **changed OAuth or MCP wiring** in the manifests

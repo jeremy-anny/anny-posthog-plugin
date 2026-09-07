@@ -1,0 +1,35 @@
+{
+  "name": "anny",
+  "owner": {
+    "name": "anny",
+    "url": "https://anny.co"
+  },
+  "description": "anny plugins for Claude. PostHog wired to https://posthog.anny.cloud.",
+  "plugins": [
+    {
+      "name": "posthog-anny",
+      "displayName": "PostHog (anny)",
+      "source": "./",
+      "description": "PostHog on https://posthog.anny.cloud (anny self-hosted) -- analytics, feature flags, experiments, error tracking.",
+      "version": "1.1.62",
+      "author": {
+        "name": "anny",
+        "url": "https://anny.co"
+      },
+      "homepage": "https://github.com/jeremy-anny/anny-posthog-plugin",
+      "repository": "https://github.com/jeremy-anny/anny-posthog-plugin",
+      "license": "MIT",
+      "category": "productivity",
+      "keywords": [
+        "analytics",
+        "feature-flags",
+        "experiments",
+        "error-tracking",
+        "a/b-testing",
+        "surveys",
+        "dashboards",
+        "llm-analytics"
+      ]
+    }
+  ]
+}

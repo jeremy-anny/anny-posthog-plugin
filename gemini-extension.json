@@ -1,0 +1,24 @@
+{
+  "name": "posthog",
+  "version": "1.0.58",
+  "description": "Access PostHog analytics, feature flags, experiments, error tracking, and insights directly from Gemini CLI",
+  "mcpServers": {
+    "posthog": {
+      "command": "npx",
+      "args": [
+        "mcp-remote@latest",
+        "${POSTHOG_MCP_URL:-https://mcp.anny.cloud/mcp}",
+        "--header",
+        "x-posthog-mcp-consumer:plugin"
+      ]
+    }
+  },
+  "contextFileName": "GEMINI.md",
+  "settings": [
+    {
+      "name": "PostHog MCP URL",
+      "description": "PostHog MCP endpoint URL (default: https://mcp.anny.cloud/mcp). Set a custom URL if you are self-hosting PostHog.",
+      "envVar": "POSTHOG_MCP_URL"
+    }
+  ]
+}

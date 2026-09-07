@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "posthog": {
+      "type": "http",
+      "url": "https://mcp.anny.cloud/mcp",
+      "headers": {
+        "x-posthog-mcp-consumer": "plugin"
+      }
+    }
+  }
+}
