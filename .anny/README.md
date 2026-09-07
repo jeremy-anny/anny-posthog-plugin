@@ -83,6 +83,11 @@ CORS-Header nur für eine hardcodierte Liste (`OAUTH_CONSENT_PAGE_ORIGINS`:
 us/eu.posthog.com und localhost). Auf demselben Host ist es same-origin und die
 Frage stellt sich nicht.
 
+> **Stand:** alles darunter ist in `gitops-services` auf dem Branch
+> `feat/mcp-oauth-reachability` umgesetzt — bis auf den RSA-Key, der in Secret
+> Manager gehört. Der Abschnitt bleibt hier, weil er erklärt, *warum* die Werte
+> so stehen; wer sie ändert, sollte ihn gelesen haben.
+
 ### Drei Dinge, ohne die der OAuth-Weg nicht funktioniert
 
 **1. `OIDC_RSA_PRIVATE_KEY` muss gesetzt sein.**
@@ -132,17 +137,36 @@ Folge davon: der MCP-Pod ruft die PostHog-API dann über den öffentlichen Ingre
 auf und läuft damit in die `adminAllowList` — die Quelladresse ist eine Pod-
 bzw. Node-Adresse, keine der drei erlaubten. Die braucht eine Ausnahme.
 
-**3. Die `adminAllowList` darf nicht auf dem MCP-Ingress liegen.**
+**3. Die Allowlist muss auf dem MCP-Ingress eine andere sein als auf der UI.**
 
-`templates/ingress.yaml` hängt die Middleware an den `posthog-mcp`-Ingress,
-sobald `ingress.adminAllowList.enabled` true ist. Das ist für einen lokalen
-Client richtig — für einen gehosteten nicht: die Claude App verbindet sich von
-Anthropics Servern aus, nicht vom Rechner des Users. Dasselbe gilt für
-`/oauth/register/` und `/oauth/token/`, die serverseitig aufgerufen werden.
+Ein gehosteter Client — claude.ai, Cowork — baut die Verbindung von Anthropics
+Infrastruktur auf, nicht vom Rechner des Users. Eine Office/VPN-Liste kann ihn
+deshalb nie zulassen, und `/oauth/register` wie `/oauth/token` werden ebenfalls
+serverseitig aufgerufen.
 
-Wer das Plugin über die Claude App verteilen will, muss `/mcp` und die
-OAuth-Pfade offen lassen; Session-Cookie und OAuth-Scopes sind die
-Zugangskontrolle, nicht die IP.
+Die Lösung ist nicht, die eine Liste aufzumachen, sondern zwei zu haben, die
+sich um genau einen Eintrag unterscheiden:
+
+| Middleware | gilt für | Bereiche |
+|---|---|---|
+| `admin-allowlist` | UI, REST-API, Admin | Office + VPN + Cluster |
+| `mcp-allowlist` | `/mcp`, OAuth-Endpunkte | dazu Anthropics Egress |
+
+Anthropic veröffentlicht dafür einen stabilen Outbound-Bereich —
+`160.79.104.0/21`, „will not change without notice"
+([Doku](https://platform.claude.com/docs/en/api/ip-addresses)). Damit ist
+`/mcp` von Office, VPN und Anthropic erreichbar und von sonst niemandem. Kein
+offener Endpunkt.
+
+`hostedClientRange` leeren sperrt die gehosteten Clients wieder aus, während
+Claude Code, Cursor und Codex unverändert weiterlaufen — die verbinden vom
+Rechner des Users und standen nie zur Debatte. Das ist der ganze Revert.
+
+`/oauth/authorize` bleibt bewusst auf der UI-Liste: die Seite kommt aus der SPA,
+und den Endpunkt ohne die UI dahinter zu öffnen bringt nichts — ein nicht
+eingeloggter Besucher landet auf `/login`. Heißt: **einmal aus Office oder VPN
+zustimmen**, danach hält der gehostete Client ein Token und ruft `/mcp` von
+Anthropics Bereich aus auf.
 
 ### Und ein Routing-Detail
 
