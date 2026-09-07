@@ -4,7 +4,7 @@ Spiegel von [`PostHog/ai-plugin`](https://github.com/PostHog/ai-plugin), umgebog
 auf unser selbst gehostetes PostHog unter **https://posthog.anny.cloud**.
 
 Identisch zum offiziellen Plugin — ~160 Skills, Slash-Commands, `error-analyzer`,
-LLM-Analytics-Hook — nur zeigt der MCP-Connector auf `mcp.anny.cloud` statt auf
+LLM-Analytics-Hook — nur zeigt der MCP-Connector auf `posthog.anny.cloud/mcp` statt auf
 `mcp.posthog.com`, und der Login läuft gegen unsere Instanz.
 
 Anmeldung passiert per **OAuth mit Dynamic Client Registration**: niemand trägt
@@ -70,130 +70,142 @@ er steht hier nur der Klarheit halber.
 
 ## Für Betreiber: was vorher stehen muss
 
-Das Plugin ist nur ein Zeiger. Damit er ins Leere zeigt oder nicht, braucht es
-den MCP-Server.
+Das Plugin ist nur ein Zeiger. Der MCP-Server selbst kommt aus dem
+`gitops-services`-Repo: `charts/posthog/templates/mcp.yaml` rendert Secret,
+Deployment und Service, und `ingressRoutes.mcp.paths` hängt `/mcp` als eigenen
+Ingress an den bestehenden PostHog-Host. Kein zweiter Hostname, kein zweites
+Zertifikat.
 
-### 1. MCP-Server deployen
+Ein Host ist die bessere Wahl, und zwar aus einem Grund, der leicht untergeht:
+die Consent-Seite in PostHog holt die MCP-Metadaten aus dem Browser. Auf einem
+eigenen `mcp.*`-Host wäre das cross-origin, und der MCP-Server setzt die
+CORS-Header nur für eine hardcodierte Liste (`OAUTH_CONSENT_PAGE_ORIGINS`:
+us/eu.posthog.com und localhost). Auf demselben Host ist es same-origin und die
+Frage stellt sich nicht.
 
-**Vorher: DNS.** `*.anny.cloud` ist ein Wildcard auf `35.246.145.83` und zeigt
-damit *nicht* auf den Kapsule-Cluster — nur `posthog.anny.cloud` und
-`p.anny.cloud` haben eigene A-Records auf `51.15.58.89`. `mcp.anny.cloud` fällt
-heute in den Wildcard und landet auf fremder Infrastruktur (404, Zertifikat
-passt nicht). Es braucht einen eigenen A-Record auf `51.15.58.89`, sonst kann
-cert-manager nicht mal ein Zertifikat ausstellen. `.anny/check-oauth.sh` erkennt
-genau diesen Fall.
+### Drei Dinge, ohne die der OAuth-Weg nicht funktioniert
 
-PostHog baut ihn als eigenes, öffentliches Image (`services/mcp/` im Monorepo,
-Hono auf Node, Redis für Session-State). Kein Fork nötig — self-hosting ist
-vorgesehen, dafür gibt es `POSTHOG_API_BASE_URL`.
+**1. `OIDC_RSA_PRIVATE_KEY` muss gesetzt sein.**
 
-```yaml
-# clusters/services/posthog-mcp/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: posthog-mcp
-  namespace: posthog
-spec:
-  replicas: 2
-  selector: { matchLabels: { app: posthog-mcp } }
-  template:
-    metadata:
-      labels: { app: posthog-mcp }
-    spec:
-      containers:
-        - name: mcp
-          # Per Digest pinnen, wie die anderen PostHog-Images. Der Tag `latest`
-          # bewegt sich mehrmals täglich.
-          image: ghcr.io/posthog/posthog-mcp@sha256:…
-          ports: [{ containerPort: 3001 }]
-          env:
-            # Der eine Schalter, der aus dem Cloud-Server einen für uns macht.
-            # Er steuert AUCH, welchen OAuth-Authorization-Server die
-            # RFC-9728-Metadaten nennen — deshalb reicht er für den Login.
-            - { name: POSTHOG_API_BASE_URL, value: "https://posthog.anny.cloud" }
-            - { name: POSTHOG_PUBLIC_URL,   value: "https://posthog.anny.cloud" }
-            # Eigene URL — von hier lädt der Client die MCP-UI-Assets.
-            - { name: MCP_APPS_BASE_URL,    value: "https://mcp.anny.cloud" }
-            - { name: POSTHOG_MCP_APPS_ANALYTICS_BASE_URL, value: "https://posthog.anny.cloud" }
-            - { name: POSTHOG_ANALYTICS_HOST, value: "https://posthog.anny.cloud" }
-            - { name: REDIS_URL, value: "redis://posthog-mcp-redis:6379" }
-            - { name: PORT, value: "3001" }
-            # Mindestens 32 Byte (openssl rand -hex 32). Fehlt er, bootet der
-            # Server trotzdem, aber alle Tools mit Bestätigungsschritt sind tot.
-            - name: MCP_SIGNED_STATE_KEY
-              valueFrom: { secretKeyRef: { name: posthog-mcp, key: signed-state-key } }
-          readinessProbe: { httpGet: { path: /readyz, port: 3001 } }
-          livenessProbe:  { httpGet: { path: /healthz, port: 3001 } }
+Die DCR-View legt den Client mit `algorithm="RS256"` an, und Django weigert
+sich, so eine `OAuthApplication` ohne RSA-Key zu speichern. Ohne den Key
+antwortet `/oauth/register/` mit `500 server_error: Failed to create client` —
+der Grund wird bewusst nicht nach außen gegeben (`"Other validation errors
+(like missing RSA key) are internal and should not be leaked"`).
+
+Der Key gehört in den `posthog-app`-Container in Scaleway Secret Manager und in
+den `secrets:`-Block der zugehörigen ExternalSecret; von dort landet er über
+`templates/secret.yaml` in `posthog-secrets` und damit im Env jedes Pods.
+Achtung beim Template: ein PEM hat Zeilenumbrüche und passt nicht in einen
+`"{{ .X }}"`-Skalar.
+
+```bash
+openssl genrsa -out oidc.pem 4096
 ```
 
-Dazu ein kleines Redis (eigenes, nicht das der PostHog-Installation —
-der MCP-Server legt dort Session-State unter eigenen Keys ab), ein Service auf
-Port 3001 und ein Ingress für `mcp.anny.cloud`.
+Derselbe fehlende Key lässt auch den `llm-gateway-credentials`-Hook-Job
+scheitern (`setup_tasks_oauth`).
 
-**`mcp.anny.cloud` und `posthog.anny.cloud` müssen beide öffentlich erreichbar
-sein.** Nicht nur aus dem Browser des Users: Anthropics Backend macht die
-Client-Registrierung und den Token-Tausch server-seitig. Ein VPN-Allowlist davor
-und der Login schlägt fehl. (Der bestehende `adminAllowList` betrifft nur die
-Admin-Pfade und ist kein Problem.)
+**2. `mcp.apiBaseUrl` muss die öffentliche URL sein.**
 
-### 2. CORS für die Consent-Seite
+Der Chart-Default ist `http://web:8000`, und der MCP-Server benutzt genau diesen
+Wert als OAuth-Issuer:
 
-Die Consent-Seite in PostHog holt die MCP-Metadaten aus dem Browser. Der
-MCP-Server setzt die CORS-Header aber nur für eine **hardcodierte** Origin-Liste
-(`OAUTH_CONSENT_PAGE_ORIGINS` in `services/mcp/src/lib/oauth-metadata-cors.ts`:
-us/eu.posthog.com und localhost) — `posthog.anny.cloud` steht da nicht drin.
-
-Kein Image-Fork nötig, das erledigt der Ingress:
-
-```yaml
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: mcp-oauth-cors
-  namespace: posthog
-spec:
-  headers:
-    accessControlAllowOriginList: ["https://posthog.anny.cloud"]
-    accessControlAllowMethods: ["GET", "OPTIONS"]
-    accessControlAllowHeaders: ["Content-Type"]
-    accessControlMaxAge: 3600
-    addVaryHeader: true
+```ts
+export const resolveAuthorizationServerUrl = (): string => {
+    if (isCloudApi()) return OAUTH_PROXY_URL
+    return getCustomApiBaseUrl()!        // = POSTHOG_API_BASE_URL
+}
 ```
 
-An die IngressRoute für `/.well-known/oauth-protected-resource` hängen.
+Mit `http://web:8000` sagt die RFC-9728-Antwort
+`authorization_servers: ["http://web:8000"]` — eine Adresse, die kein Client
+erreicht, und die Discovery endet dort. `POSTHOG_PUBLIC_URL` hilft nicht, das
+ist nur für gerenderte Links.
 
-### 3. Prüfen
+Eine Falle daneben: `isCloudApi()` behandelt jeden Hostnamen auf
+`.svc.cluster.local` als Cloud und liefert dann `https://oauth.posthog.com` —
+also PostHog Cloud als Issuer. Cluster-interne Namen sind hier in beiden
+Varianten falsch. Richtig ist `https://posthog.anny.cloud`.
+
+Folge davon: der MCP-Pod ruft die PostHog-API dann über den öffentlichen Ingress
+auf und läuft damit in die `adminAllowList` — die Quelladresse ist eine Pod-
+bzw. Node-Adresse, keine der drei erlaubten. Die braucht eine Ausnahme.
+
+**3. Die `adminAllowList` darf nicht auf dem MCP-Ingress liegen.**
+
+`templates/ingress.yaml` hängt die Middleware an den `posthog-mcp`-Ingress,
+sobald `ingress.adminAllowList.enabled` true ist. Das ist für einen lokalen
+Client richtig — für einen gehosteten nicht: die Claude App verbindet sich von
+Anthropics Servern aus, nicht vom Rechner des Users. Dasselbe gilt für
+`/oauth/register/` und `/oauth/token/`, die serverseitig aufgerufen werden.
+
+Wer das Plugin über die Claude App verteilen will, muss `/mcp` und die
+OAuth-Pfade offen lassen; Session-Cookie und OAuth-Scopes sind die
+Zugangskontrolle, nicht die IP.
+
+### Und ein Routing-Detail
+
+`ingressRoutes.mcp.paths` enthält nur `/mcp`. Die Discovery-URL nach RFC 9728
+ist aber `/.well-known/oauth-protected-resource/mcp` — der Client schiebt das
+Präfix zwischen Host und Pfad. Der Pfad geht heute an Django und endet in einem
+302 auf `/login`. Er muss mit in die Liste:
+
+```yaml
+ingressRoutes:
+  mcp:
+    port: 3001
+    paths:
+    - /mcp
+    - /.well-known/oauth-protected-resource/mcp
+```
+
+Django behält dabei seinen eigenen `/.well-known/oauth-protected-resource`
+ohne Suffix — der Chart rendert `pathType: Exact` auf den Pfad und `Prefix` auf
+Pfad + `/`, überdeckt den kürzeren also nicht.
+
+Kosmetisch, aber derselbe Mechanismus: `MCP_APPS_BASE_URL` ist im Chart nicht
+gesetzt und `/ui-apps/*` nicht geroutet — die interaktiven MCP-UI-Ansichten
+laden dann nicht. Tools funktionieren davon unabhängig.
+
+### Prüfen
 
 ```bash
 .anny/check-oauth.sh
 ```
 
 Läuft genau die Sequenz ab, die die Claude App beim ersten Aufruf abläuft, und
-sagt bei einem Fehler welcher Schritt: 401 mit `WWW-Authenticate`,
-RFC-9728-Metadaten mit der richtigen Authorization-Server-URL, CORS-Header,
-RFC-8414-Metadaten mit `registration_endpoint`, und ob DCR unauthentifiziert
-antwortet.
+sagt bei einem Fehler welcher Schritt.
 
-Mit `--register` macht es zusätzlich eine echte Registrierung und gibt die
-`client_id` aus (danach unter *Settings → Connected apps* wieder löschen).
+**Der read-only-Lauf reicht nicht.** Dass `/oauth/register/` auf einen leeren
+Body mit `400 invalid_client_metadata` antwortet, beweist nur, dass die View
+lebt — die Serializer-Validierung läuft vor dem Anlegen. Ob eine echte
+Registrierung durchgeht, zeigt erst:
 
----
+```bash
+.anny/check-oauth.sh --register
+```
+
+Das legt einen echten OAuth-Client an und gibt die `client_id` aus (danach unter
+*Settings → Connected apps* löschen).
 
 ## Wie der Login abläuft
 
 ```
-Claude ──POST /mcp──────────────────────► mcp.anny.cloud
+Claude ──POST /mcp──────────────────────► posthog.anny.cloud/mcp
        ◄─401 + WWW-Authenticate──────────
        ──GET /.well-known/oauth-protected-resource/mcp──►
        ◄─{"authorization_servers":["https://posthog.anny.cloud"]}
-       ──GET /.well-known/oauth-authorization-server───► posthog.anny.cloud
+       ──GET /.well-known/oauth-authorization-server───►
        ◄─{…,"registration_endpoint":"…/oauth/register/"}
        ──POST /oauth/register───────────► (RFC 7591, unauthentifiziert)
        ◄─{"client_id":…}
   User ──/oauth/authorize im Browser────► Consent-Screen → Authorize
 Claude ──POST /oauth/token──────────────► access_token
 ```
+
+Alles auf einem Host: Schritt 1 und 2 beantwortet der MCP-Server, Schritt 3 bis 6
+Django. Der Ingress entscheidet anhand des Pfads, wer antwortet.
 
 Kein Personal API Key, kein Project Token — in der Claude App gibt es für einen
 Plugin-Connector gar kein Feld, wo man einen Header hinterlegen könnte. Der
@@ -264,7 +276,7 @@ git commit -am "config: …"
 
 | Datei | Änderung |
 |---|---|
-| `.mcp.json`, `mcp.json`, `gemini-extension.json` | MCP-Endpoint → `mcp.anny.cloud` |
+| `.mcp.json`, `mcp.json`, `gemini-extension.json` | MCP-Endpoint → `posthog.anny.cloud/mcp` |
 | `.claude-plugin/plugin.json` | Name → `posthog-anny` |
 | `.claude-plugin/marketplace.json` | Marketplace → `anny`, Plugin-Eintrag |
 | `.agents/plugins/marketplace.json` | Quelle → dieses Repo. **Ohne das würde die Claude App aus unserem Marketplace das offizielle Plugin installieren** — mit Cloud-Endpoint. |

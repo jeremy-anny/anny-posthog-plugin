@@ -88,15 +88,20 @@ fi
 #      this header has to come from the ingress instead.
 echo
 echo "3. CORS for the consent page"
-acao=$(curl -sS -m 15 -D - -o /dev/null \
-    -H "Origin: ${POSTHOG_URL}" \
-    "${MCP_ORIGIN}/.well-known/oauth-protected-resource${MCP_PATH}" 2>/dev/null \
-    | grep -i '^access-control-allow-origin:' | head -1 | tr -d '\r')
-if [ -n "$acao" ]; then
-    pass "${acao}"
+if [ "${MCP_ORIGIN%/}" = "${POSTHOG_URL%/}" ]; then
+    pass "not applicable -- MCP and the consent page share an origin"
 else
-    fail "no Access-Control-Allow-Origin for ${POSTHOG_URL}"
-    info "expected -- add it on the ingress; see README, 'CORS für die Consent-Seite'"
+    acao=$(curl -sS -m 15 -D - -o /dev/null \
+        -H "Origin: ${POSTHOG_URL}" \
+        "${MCP_ORIGIN}/.well-known/oauth-protected-resource${MCP_PATH}" 2>/dev/null \
+        | grep -i '^access-control-allow-origin:' | head -1 | tr -d '\r')
+    if [ -n "$acao" ]; then
+        pass "${acao}"
+    else
+        fail "no Access-Control-Allow-Origin for ${POSTHOG_URL}"
+        info "OAUTH_CONSENT_PAGE_ORIGINS in the MCP image does not include this"
+        info "host; add the header on the ingress, or serve MCP on the same origin"
+    fi
 fi
 
 # 4 -- The authorization server itself.
@@ -125,6 +130,8 @@ if [ -n "$reg" ]; then
     code=${body##*$'\n'}
     if [ "$code" = "400" ] && printf '%s' "$body" | grep -q invalid_client_metadata; then
         pass "reachable and unauthenticated (400 invalid_client_metadata on an empty body)"
+        info "this only proves the view is alive -- serializer validation runs"
+        info "before the client is created. Use --register to test the real path."
     elif [ "$code" = "401" ] || [ "$code" = "403" ]; then
         fail "registration requires auth (${code}) -- Claude cannot self-register"
     else
