@@ -75,6 +75,14 @@ den MCP-Server.
 
 ### 1. MCP-Server deployen
 
+**Vorher: DNS.** `*.anny.cloud` ist ein Wildcard auf `35.246.145.83` und zeigt
+damit *nicht* auf den Kapsule-Cluster — nur `posthog.anny.cloud` und
+`p.anny.cloud` haben eigene A-Records auf `51.15.58.89`. `mcp.anny.cloud` fällt
+heute in den Wildcard und landet auf fremder Infrastruktur (404, Zertifikat
+passt nicht). Es braucht einen eigenen A-Record auf `51.15.58.89`, sonst kann
+cert-manager nicht mal ein Zertifikat ausstellen. `.anny/check-oauth.sh` erkennt
+genau diesen Fall.
+
 PostHog baut ihn als eigenes, öffentliches Image (`services/mcp/` im Monorepo,
 Hono auf Node, Redis für Session-State). Kein Fork nötig — self-hosting ist
 vorgesehen, dafür gibt es `POSTHOG_API_BASE_URL`.

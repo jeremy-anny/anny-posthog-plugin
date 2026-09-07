@@ -31,21 +31,38 @@ echo
 # 1 -- The MCP server must refuse an unauthenticated call and say where to
 #      authenticate. This is what kicks the whole OAuth dance off.
 echo "1. MCP rejects unauthenticated calls"
-hdrs=$(curl -sS -m 15 -D - -o /dev/null -X POST "$MCP_URL" \
+hdrs=$(mktemp); errs=$(mktemp)
+trap 'rm -f "$hdrs" "$errs"' EXIT
+curl -sS -m 15 -D "$hdrs" -o /dev/null -X POST "$MCP_URL" \
     -H 'content-type: application/json' \
     -H 'accept: application/json, text/event-stream' \
-    -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"preflight","version":"1"}}}' 2>&1)
-code=$(printf '%s' "$hdrs" | awk 'NR==1{print $2}')
-case "$code" in
-    401) pass "401 as expected" ;;
-    "")  fail "no response -- is ${MCP_ORIGIN} deployed and reachable?" ;;
-    *)   fail "expected 401, got ${code}" ;;
-esac
-if printf '%s' "$hdrs" | grep -qi '^www-authenticate:'; then
-    pass "WWW-Authenticate header present"
-    info "$(printf '%s' "$hdrs" | grep -i '^www-authenticate:' | head -1 | tr -d '\r')"
+    -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"preflight","version":"1"}}}' \
+    2>"$errs"
+rc=$?
+if [ "$rc" -ne 0 ]; then
+    # Keep curl's own diagnosis: "not deployed", "bad certificate" and "wrong
+    # host behind the wildcard" all look identical once it is flattened to a
+    # missing status code.
+    fail "$(head -1 "$errs" | sed 's/^curl: //')"
+    case "$rc" in
+        6)  info "DNS does not resolve ${MCP_ORIGIN#https://}" ;;
+        7)  info "resolves but nothing is listening -- ingress not up?" ;;
+        60) info "TLS certificate not valid for ${MCP_ORIGIN#https://} -- often a"
+            info "wildcard DNS record pointing at unrelated infrastructure."
+            info "Check: dig +short ${MCP_ORIGIN#https://}" ;;
+    esac
 else
-    fail "no WWW-Authenticate header -- clients cannot discover the auth server"
+    code=$(awk 'NR==1{print $2}' "$hdrs")
+    case "$code" in
+        401) pass "401 as expected" ;;
+        *)   fail "expected 401, got ${code}" ;;
+    esac
+    if grep -qi '^www-authenticate:' "$hdrs"; then
+        pass "WWW-Authenticate header present"
+        info "$(grep -i '^www-authenticate:' "$hdrs" | head -1 | tr -d '\r')"
+    else
+        fail "no WWW-Authenticate header -- clients cannot discover the auth server"
+    fi
 fi
 
 # 2 -- RFC 9728. Served by the MCP server itself; must name our PostHog, not
