@@ -1,7 +1,7 @@
 {
   "name": "posthog-anny",
   "description": "PostHog on https://posthog.anny.cloud (anny self-hosted) -- analytics, feature flags, experiments, error tracking. Mirror of PostHog/ai-plugin.",
-  "version": "1.1.62",
+  "version": "1.1.63",
   "author": {
     "name": "PostHog",
     "email": "hey@posthog.com",
