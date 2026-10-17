@@ -397,7 +397,7 @@
 
     You should also see events and exceptions in PostHog coming from your server-side code in the activity feed.
 
-    [Check for server events in PostHog](https://posthog.anny.cloud/activity/explore)
+    [Check for server events in PostHog](https://posthog.anny.cloud/activity/events)
 
 8.  7
 

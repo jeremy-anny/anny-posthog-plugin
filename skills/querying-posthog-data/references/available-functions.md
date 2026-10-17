@@ -319,6 +319,7 @@ groupBitmapState
 groupBitmapXor
 groupBitOr
 groupBitXor
+grouping
 groupUniqArray
 groupUniqArrayArray
 h3CellAreaM2
@@ -517,8 +518,8 @@ maxOrNull
 maxState
 maxStateOrDefault
 maxStateOrNull
-MD5
 md5
+MD5
 median
 medianArgMax
 medianArgMaxOrDefault
@@ -698,6 +699,7 @@ rowNumberInAllBlocks
 rowNumberInBlock
 rpad
 rtrim
+sha1
 sign
 simpleLinearRegression
 sin

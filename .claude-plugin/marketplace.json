@@ -11,7 +11,7 @@
       "displayName": "PostHog (anny)",
       "source": "./",
       "description": "PostHog on https://posthog.anny.cloud (anny self-hosted) -- analytics, feature flags, experiments, error tracking.",
-      "version": "1.1.67",
+      "version": "1.1.69",
       "author": {
         "name": "anny",
         "url": "https://anny.co"
